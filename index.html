@@ -13,7 +13,9 @@
         
         body {
             font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            background: 
+                linear-gradient(135deg, rgba(102, 126, 234, 0.5) 0%, rgba(118, 75, 162, 0.5) 100%),
+                url('smart_engineer.png') center/cover no-repeat fixed;
             min-height: 100vh;
             padding: 20px;
         }
@@ -249,6 +251,12 @@
             color: #155724;
         }
         
+        .alert-error {
+            background: #f8d7da;
+            border: 1px solid #f5c6cb;
+            color: #721c24;
+        }
+        
         @media (max-width: 768px) {
             .sensor-grid {
                 grid-template-columns: 1fr;
@@ -267,7 +275,7 @@
             position: fixed;
             top: 20px;
             right: 20px;
-            background: #4CAF50;
+            background: #f44336;
             color: white;
             padding: 10px 15px;
             border-radius: 20px;
@@ -275,8 +283,8 @@
             z-index: 1000;
         }
         
-        .offline {
-            background: #f44336;
+        .connected {
+            background: #4CAF50;
         }
         
         .footer {
@@ -285,11 +293,30 @@
             color: white;
             font-size: 0.9rem;
         }
+
+        .esp-config {
+            background: #2c3e50;
+            color: white;
+            margin-top: 20px;
+        }
+        
+        .esp-config h3 {
+            color: white;
+            border-bottom: 2px solid #3498db;
+        }
+
+        .config-item {
+            background: rgba(255,255,255,0.1);
+            padding: 12px;
+            border-radius: 5px;
+            margin: 10px 0;
+            font-family: monospace;
+        }
     </style>
 </head>
 <body>
     <div class="connection-status" id="connectionStatus">
-        🌐 Demo Mode - Static Website
+        🔴 ESP32 Disconnected
     </div>
     
     <div class="container">
@@ -297,7 +324,7 @@
         
         <!-- System Alert -->
         <div id="systemAlert" class="alert alert-info">
-            📊 This is a demo dashboard showing your irrigation system interface
+            📡 Waiting for ESP32 connection...
         </div>
         
         <div class="dashboard-grid">
@@ -307,11 +334,11 @@
                 <div class="sensor-grid">
                     <div class="sensor-item">
                         <div class="sensor-label">Temperature</div>
-                        <span class="sensor-value" id="temperature">24.4°C</span>
+                        <span class="sensor-value" id="temperature">--°C</span>
                     </div>
                     <div class="sensor-item">
                         <div class="sensor-label">Humidity</div>
-                        <span class="sensor-value" id="humidity">42.8%</span>
+                        <span class="sensor-value" id="humidity">--%</span>
                     </div>
                 </div>
             </div>
@@ -322,7 +349,7 @@
                 <div class="status-grid">
                     <div class="status-item">
                         <span class="status-label">Soil Moisture</span>
-                        <span class="status-value" id="soilMoisture">2649</span>
+                        <span class="status-value" id="soilMoisture">----</span>
                     </div>
                     <div class="status-item">
                         <span class="status-label">Pump Status</span>
@@ -339,7 +366,7 @@
                 </div>
                 
                 <div class="moisture-level moist" id="moistureLevel">
-                    🌿 MOIST - Target Reached
+                    📡 Waiting for sensor data...
                 </div>
             </div>
         </div>
@@ -352,6 +379,34 @@
                 <button class="manual-pump" onclick="togglePump()">Manual Pump Control</button>
                 <button onclick="refreshData()">🔄 Refresh Data</button>
                 <button onclick="showInfo()">ℹ️ System Info</button>
+            </div>
+        </div>
+
+        <!-- ESP32 Connection Guide -->
+        <div class="card esp-config">
+            <h3>🔧 ESP32 Connection Setup</h3>
+            <div class="guide-section">
+                <strong>Step 1: Update your ESP32 code to send data to this website</strong>
+                <div class="config-item">
+                    const char* serverURL = "https://yourusername.github.io/repository-name/api";
+                </div>
+                
+                <strong>Step 2: Your ESP32 should send JSON data like this:</strong>
+                <div class="config-item">
+                    {
+                      "temperature": 24.5,
+                      "humidity": 45.2,
+                      "soilMoisture": 2800,
+                      "pumpStatus": false,
+                      "systemEnabled": true,
+                      "timestamp": "2024-01-15T10:30:00Z"
+                    }
+                </div>
+
+                <strong>Step 3: Use WiFi to connect ESP32 to internet</strong>
+                <div class="config-item">
+                    WiFi.begin("YourWiFiName", "YourWiFiPassword");
+                </div>
             </div>
         </div>
         
@@ -388,41 +443,130 @@
     </div>
     
     <script>
-        // Demo data simulation
+        // System data
         let systemData = {
-            moisture: 2649,
-            temperature: 24.4,
-            humidity: 42.8,
+            moisture: null,
+            temperature: null,
+            humidity: null,
             threshold: 3500,
             pumpStatus: false,
-            systemEnabled: true
+            systemEnabled: true,
+            lastUpdate: null
         };
+
+        let isConnected = false;
+
+        // Function to fetch data from ESP32
+        async function fetchESP32Data() {
+            try {
+                // Replace with your actual ESP32's IP address (check Serial Monitor)
+                const response = await fetch('http://192.168.0.100', {
+                    method: 'GET',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    }
+                });
+                
+                if (response.ok) {
+                    const data = await response.json();
+                    updateSystemData(data);
+                    setConnectionStatus(true);
+                } else {
+                    throw new Error('ESP32 not responding');
+                }
+            } catch (error) {
+                console.log('ESP32 connection error:', error);
+                setConnectionStatus(false);
+            }
+        }
+
+        // Function to send commands to ESP32
+        async function sendCommandToESP32(command, value) {
+            try {
+                const response = await fetch('http://192.168.1.XXX/control', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        command: command,
+                        value: value
+                    })
+                });
+                
+                if (response.ok) {
+                    return await response.json();
+                } else {
+                    throw new Error('Command failed');
+                }
+            } catch (error) {
+                alert('Failed to send command to ESP32: ' + error.message);
+                return null;
+            }
+        }
+
+        function setConnectionStatus(connected) {
+            isConnected = connected;
+            const statusElement = document.getElementById('connectionStatus');
+            const alertElement = document.getElementById('systemAlert');
+            
+            if (connected) {
+                statusElement.className = 'connection-status connected';
+                statusElement.innerHTML = '🟢 ESP32 Connected';
+                alertElement.className = 'alert alert-success';
+                alertElement.innerHTML = '✅ ESP32 connected and monitoring your plants!';
+            } else {
+                statusElement.className = 'connection-status';
+                statusElement.innerHTML = '🔴 ESP32 Disconnected';
+                alertElement.className = 'alert alert-error';
+                alertElement.innerHTML = '❌ Cannot connect to ESP32. Check your device and network.';
+            }
+        }
+
+        function updateSystemData(data) {
+            systemData = { ...systemData, ...data };
+            systemData.lastUpdate = new Date();
+
+            // Update display elements
+            if (data.temperature !== undefined) {
+                document.getElementById('temperature').textContent = data.temperature.toFixed(1) + '°C';
+            }
+            if (data.humidity !== undefined) {
+                document.getElementById('humidity').textContent = data.humidity.toFixed(1) + '%';
+            }
+            if (data.soilMoisture !== undefined) {
+                document.getElementById('soilMoisture').textContent = data.soilMoisture;
+            }
+            
+            updateDisplay();
+        }
         
         function updateDisplay() {
             // Update moisture level display
             const moistureElement = document.getElementById('moistureLevel');
             const moisture = systemData.moisture;
             
+            if (!isConnected || moisture === null) {
+                moistureElement.className = 'moisture-level';
+                moistureElement.innerHTML = '📡 Waiting for sensor data...';
+                moistureElement.style.background = '#f8f9fa';
+                moistureElement.style.color = '#666';
+                moistureElement.style.border = '2px solid #ddd';
+                return;
+            }
+            
             if (moisture > 3800) {
                 moistureElement.className = 'moisture-level very-dry';
                 moistureElement.innerHTML = '🚨 VERY DRY - Needs Water!';
-                document.getElementById('systemAlert').className = 'alert alert-warning';
-                document.getElementById('systemAlert').innerHTML = '⚠️ Soil is very dry! Auto-watering will start.';
             } else if (moisture > 3500) {
                 moistureElement.className = 'moisture-level dry';
                 moistureElement.innerHTML = '🌵 DRY - Pump Will Run';
-                document.getElementById('systemAlert').className = 'alert alert-warning';
-                document.getElementById('systemAlert').innerHTML = '⚠️ Soil is dry! Auto-watering will start.';
             } else if (moisture > 2800) {
                 moistureElement.className = 'moisture-level moist';
                 moistureElement.innerHTML = '🌿 MOIST - Target Reached';
-                document.getElementById('systemAlert').className = 'alert alert-success';
-                document.getElementById('systemAlert').innerHTML = '✅ Soil moisture is at target level!';
             } else {
-                moistureLevel.className = 'moisture-level wet';
-                moistureLevel.innerHTML = '💧 WET - Optimal';
-                document.getElementById('systemAlert').className = 'alert alert-success';
-                document.getElementById('systemAlert').innerHTML = '✅ Soil moisture is optimal!';
+                moistureElement.className = 'moisture-level wet';
+                moistureElement.innerHTML = '💧 WET - Optimal';
             }
             
             // Update pump status
@@ -436,73 +580,70 @@
             systemElement.className = systemData.systemEnabled ? 'status-value status-enabled' : 'status-value status-off';
         }
         
-        function toggleSystem() {
-            systemData.systemEnabled = !systemData.systemEnabled;
-            if (!systemData.systemEnabled) {
-                systemData.pumpStatus = false;
+        async function toggleSystem() {
+            const newState = !systemData.systemEnabled;
+            const result = await sendCommandToESP32('toggleSystem', newState);
+            
+            if (result) {
+                systemData.systemEnabled = newState;
+                if (!newState) {
+                    systemData.pumpStatus = false;
+                }
+                updateDisplay();
+                alert(systemData.systemEnabled ? 'Auto System ENABLED' : 'Auto System DISABLED');
             }
-            updateDisplay();
-            alert(systemData.systemEnabled ? 'Auto System ENABLED' : 'Auto System DISABLED');
         }
         
-        function togglePump() {
-            systemData.pumpStatus = !systemData.pumpStatus;
-            updateDisplay();
-            alert(systemData.pumpStatus ? 'Pump manually started' : 'Pump manually stopped');
+        async function togglePump() {
+            const newState = !systemData.pumpStatus;
+            const result = await sendCommandToESP32('togglePump', newState);
+            
+            if (result) {
+                systemData.pumpStatus = newState;
+                updateDisplay();
+                alert(systemData.pumpStatus ? 'Pump manually started' : 'Pump manually stopped');
+            }
         }
         
         function refreshData() {
-            // Simulate data refresh with small variations
-            systemData.moisture += Math.floor(Math.random() * 100) - 50;
-            systemData.temperature += (Math.random() - 0.5) * 2;
-            systemData.humidity += (Math.random() - 0.5) * 5;
-            
-            // Keep values in realistic ranges
-            systemData.moisture = Math.max(2000, Math.min(4500, systemData.moisture));
-            systemData.temperature = Math.max(15, Math.min(35, systemData.temperature));
-            systemData.humidity = Math.max(20, Math.min(90, systemData.humidity));
-            
-            // Update display elements
-            document.getElementById('soilMoisture').textContent = systemData.moisture;
-            document.getElementById('temperature').textContent = systemData.temperature.toFixed(1) + '°C';
-            document.getElementById('humidity').textContent = systemData.humidity.toFixed(1) + '%';
-            
-            updateDisplay();
+            fetchESP32Data();
             
             // Show refresh feedback
             const button = event.target;
             const originalText = button.textContent;
-            button.textContent = '✅ Updated!';
-            button.style.background = 'linear-gradient(45deg, #4CAF50, #45a049)';
+            button.textContent = '🔄 Refreshing...';
             setTimeout(() => {
                 button.textContent = originalText;
-            }, 1000);
+            }, 2000);
         }
         
         function showInfo() {
+            const lastUpdateStr = systemData.lastUpdate ? 
+                systemData.lastUpdate.toLocaleString() : 'Never';
+                
             alert(`Smart Irrigation System Info:
             
 📊 Current Status:
-• Soil Moisture: ${systemData.moisture}
-• Temperature: ${systemData.temperature.toFixed(1)}°C  
-• Humidity: ${systemData.humidity.toFixed(1)}%
+• Soil Moisture: ${systemData.moisture || 'No data'}
+• Temperature: ${systemData.temperature ? systemData.temperature.toFixed(1) + '°C' : 'No data'}
+• Humidity: ${systemData.humidity ? systemData.humidity.toFixed(1) + '%' : 'No data'}
 • Threshold: ${systemData.threshold}
 • Pump: ${systemData.pumpStatus ? 'ON' : 'OFF'}
 • Auto System: ${systemData.systemEnabled ? 'ENABLED' : 'DISABLED'}
+• Connection: ${isConnected ? 'Connected' : 'Disconnected'}
+• Last Update: ${lastUpdateStr}
 
-🌱 This demo shows your irrigation system interface.
-Connect to your ESP32 device for real-time data!`);
+🌱 Connect your ESP32 device for real-time monitoring!`);
         }
         
-        // Simulate real-time updates every 30 seconds
+        // Auto-refresh data every 10 seconds
         setInterval(() => {
-            if (Math.random() < 0.3) { // 30% chance to update
-                refreshData();
-            }
-        }, 30000);
+            fetchESP32Data();
+        }, 10000);
         
-        // Initialize display
+        // Initialize display and try to connect
         updateDisplay();
+        fetchESP32Data();
     </script>
 </body>
 </html>
